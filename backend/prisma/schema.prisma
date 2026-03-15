@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String
+  createdAt DateTime @default(now())
+  projects  Project[]
+  patterns  Pattern[]
+  stash     StashEntry[]
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  yarnBrand   String?
+  yarnWeight  String?
+  yarnColor   String?
+  needleSize  String?
+  status      String    @default("active")
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  counters    Counter[]
+  pattern     Pattern?  @relation(fields: [patternId], references: [id])
+  patternId   String?
+}
+
+model Counter {
+  id        String   @id @default(cuid())
+  name      String
+  value     Int      @default(0)
+  target    Int?
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Pattern {
+  id        String    @id @default(cuid())
+  name      String
+  sourceUrl String?
+  notes     String?
+  tags      String?
+  imageUrl  String?
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  projects  Project[]
+  createdAt DateTime  @default(now())
+}
+
+model StashEntry {
+  id        String   @id @default(cuid())
+  brand     String
+  name      String
+  weight    String
+  color     String?
+  yardage   Int?
+  quantity  Int      @default(1)
+  notes     String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
