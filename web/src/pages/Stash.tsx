@@ -1,32 +1,177 @@
 import React, { useState, useEffect } from 'react'
-import { Layers, Plus, Trash2, Search } from 'lucide-react'
+import { Plus, Trash2, Edit2, Check, X, Layers, Filter } from 'lucide-react'
 import { useApi } from '../hooks/useApi'
 import Modal from '../components/Modal'
 import type { StashEntry } from '../types'
 
-const YARN_WEIGHTS: StashEntry['weight'][] = [
-  'lace', 'fingering', 'sport', 'dk', 'worsted', 'aran', 'bulky', 'super-bulky',
-]
+const YARN_WEIGHTS = ['lace', 'fingering', 'sport', 'DK', 'worsted', 'aran', 'bulky', 'super-bulky']
 
-const WEIGHT_COLORS: Record<string, string> = {
-  lace: 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300',
-  fingering: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
-  sport: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
-  dk: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300',
-  worsted: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300',
-  aran: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300',
-  bulky: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300',
-  'super-bulky': 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300',
+const weightColors: Record<string, string> = {
+  lace: 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-400',
+  fingering: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400',
+  sport: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
+  DK: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
+  worsted: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
+  aran: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400',
+  bulky: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
+  'super-bulky': 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
 }
 
-const defaultForm = {
+interface StashForm {
+  brand: string
+  name: string
+  weight: string
+  color: string
+  yardage: string
+  quantity: string
+  notes: string
+}
+
+const defaultForm: StashForm = {
   brand: '',
   name: '',
-  weight: 'worsted' as StashEntry['weight'],
+  weight: 'worsted',
   color: '',
   yardage: '',
   quantity: '1',
   notes: '',
+}
+
+function StashCard({
+  entry,
+  onDelete,
+  onUpdate,
+}: {
+  entry: StashEntry
+  onDelete: (id: string) => void
+  onUpdate: (id: string, data: Partial<StashEntry>) => Promise<void>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [form, setForm] = useState<StashForm>({
+    brand: entry.brand,
+    name: entry.name,
+    weight: entry.weight,
+    color: entry.color ?? '',
+    yardage: entry.yardage?.toString() ?? '',
+    quantity: entry.quantity.toString(),
+    notes: entry.notes ?? '',
+  })
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await onUpdate(entry.id, {
+        brand: form.brand,
+        name: form.name,
+        weight: form.weight as StashEntry['weight'],
+        color: form.color || undefined,
+        yardage: form.yardage ? parseInt(form.yardage, 10) : undefined,
+        quantity: parseInt(form.quantity, 10) || 1,
+        notes: form.notes || undefined,
+      })
+      setEditing(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="card p-4 border-2 border-brand-300 dark:border-brand-700">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="label text-xs">Brand *</label>
+              <input className="input text-sm py-1.5" value={form.brand} onChange={e => setForm(p => ({ ...p, brand: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label text-xs">Yarn Name *</label>
+              <input className="input text-sm py-1.5" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="label text-xs">Weight</label>
+              <select className="input text-sm py-1.5" value={form.weight} onChange={e => setForm(p => ({ ...p, weight: e.target.value }))}>
+                {YARN_WEIGHTS.map(w => <option key={w} value={w}>{w}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label text-xs">Color</label>
+              <input className="input text-sm py-1.5" value={form.color} onChange={e => setForm(p => ({ ...p, color: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="label text-xs">Yardage</label>
+              <input className="input text-sm py-1.5" type="number" value={form.yardage} onChange={e => setForm(p => ({ ...p, yardage: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label text-xs">Quantity (skeins)</label>
+              <input className="input text-sm py-1.5" type="number" min="1" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button onClick={handleSave} disabled={saving} className="btn-primary text-xs py-1.5">
+              <Check size={12} /> {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button onClick={() => setEditing(false)} className="btn-secondary text-xs py-1.5">
+              <X size={12} /> Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card p-4 flex items-start gap-3 group hover:shadow-md transition-shadow">
+      {/* Color swatch */}
+      <div
+        className="w-10 h-10 rounded-xl flex-shrink-0 border border-gray-200 dark:border-gray-700"
+        style={{
+          backgroundColor: entry.color
+            ? entry.color.startsWith('#') ? entry.color : undefined
+            : undefined,
+          background: !entry.color || !entry.color.startsWith('#')
+            ? 'linear-gradient(135deg, #f3d0fe, #c4b5fd)'
+            : undefined,
+        }}
+        title={entry.color ?? 'No color specified'}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="font-semibold text-gray-900 dark:text-white text-sm">
+              {entry.brand} — {entry.name}
+            </p>
+            {entry.color && (
+              <p className="text-xs text-gray-500 dark:text-gray-400">{entry.color}</p>
+            )}
+          </div>
+          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button onClick={() => setEditing(true)} className="btn-ghost p-1"><Edit2 size={13} /></button>
+            <button onClick={() => onDelete(entry.id)} className="btn-ghost p-1 text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <span className={`badge text-xs ${weightColors[entry.weight] ?? 'bg-gray-100 text-gray-600'}`}>
+            {entry.weight}
+          </span>
+          {entry.yardage && (
+            <span className="text-xs text-gray-400">{entry.yardage.toLocaleString()} yds</span>
+          )}
+          {entry.quantity > 1 && (
+            <span className="text-xs text-gray-400">×{entry.quantity} skeins</span>
+          )}
+        </div>
+        {entry.notes && (
+          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 line-clamp-1">{entry.notes}</p>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function Stash() {
@@ -34,40 +179,44 @@ export default function Stash() {
   const [stash, setStash] = useState<StashEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
-  const [form, setForm] = useState(defaultForm)
+  const [form, setForm] = useState<StashForm>(defaultForm)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const [search, setSearch] = useState('')
-  const [weightFilter, setWeightFilter] = useState<string>('all')
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [filterWeight, setFilterWeight] = useState('')
+  const [filterColor, setFilterColor] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
 
-  useEffect(() => {
-    api.get<{ stash: StashEntry[] }>('/stash')
+  const load = () => {
+    const params = new URLSearchParams()
+    if (filterWeight) params.set('weight', filterWeight)
+    if (filterColor) params.set('color', filterColor)
+    api.get<{ stash: StashEntry[] }>(`/stash${params.toString() ? '?' + params : ''}`)
       .then(d => setStash(d.stash))
       .catch(console.error)
       .finally(() => setLoading(false))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }
 
-  async function handleAdd(e: React.FormEvent) {
+  useEffect(() => { load() }, [filterWeight, filterColor]) // eslint-disable-line
+
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    if (!form.brand.trim() || !form.name.trim()) {
-      setError('Brand and yarn name are required')
+    if (!form.brand.trim() || !form.name.trim() || !form.weight) {
+      setError('Brand, name, and weight are required')
       return
     }
     setSubmitting(true)
     try {
-      const { entry } = await api.post<{ entry: StashEntry }>('/stash', {
-        brand: form.brand.trim(),
-        name: form.name.trim(),
+      const res = await api.post<{ entry: StashEntry }>('/stash', {
+        brand: form.brand,
+        name: form.name,
         weight: form.weight,
-        color: form.color || null,
-        yardage: form.yardage ? parseInt(form.yardage) : null,
-        quantity: parseInt(form.quantity) || 1,
-        notes: form.notes || null,
+        color: form.color || undefined,
+        yardage: form.yardage ? parseInt(form.yardage, 10) : undefined,
+        quantity: parseInt(form.quantity, 10) || 1,
+        notes: form.notes || undefined,
       })
-      setStash(s => [entry, ...s])
+      setStash(s => [res.entry, ...s])
       setShowAdd(false)
       setForm(defaultForm)
     } catch (err) {
@@ -77,160 +226,96 @@ export default function Stash() {
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('Remove this yarn from your stash?')) return
-    setDeletingId(id)
-    try {
-      await api.del(`/stash/${id}`)
-      setStash(s => s.filter(e => e.id !== id))
-    } catch {
-      alert('Failed to delete entry')
-    } finally {
-      setDeletingId(null)
-    }
+  const handleDelete = async (id: string) => {
+    if (!confirm('Remove this yarn from stash?')) return
+    await api.del(`/stash/${id}`)
+    setStash(s => s.filter(e => e.id !== id))
   }
 
-  const filtered = stash.filter(e => {
-    const q = search.toLowerCase()
-    const matchSearch = !q ||
-      e.brand.toLowerCase().includes(q) ||
-      e.name.toLowerCase().includes(q) ||
-      (e.color?.toLowerCase().includes(q) ?? false)
-    const matchWeight = weightFilter === 'all' || e.weight === weightFilter
-    return matchSearch && matchWeight
-  })
+  const handleUpdate = async (id: string, data: Partial<StashEntry>) => {
+    const res = await api.put<{ entry: StashEntry }>(`/stash/${id}`, data)
+    setStash(s => s.map(e => e.id === id ? res.entry : e))
+  }
 
-  const totalYardage = stash.reduce((sum, e) => sum + (e.yardage ?? 0) * e.quantity, 0)
+  const totalYardage = stash.reduce((s, e) => s + (e.yardage ?? 0) * e.quantity, 0)
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-6 max-w-4xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Yarn Stash</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             {stash.length} yarn{stash.length !== 1 ? 's' : ''}
-            {totalYardage > 0 && ` · ${totalYardage.toLocaleString()} yards total`}
+            {totalYardage > 0 && ` · ${totalYardage.toLocaleString()} total yards`}
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setShowAdd(true)}>
-          <Plus size={16} />
-          Add yarn
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowFilters(v => !v)}
+            className={`btn-secondary ${showFilters ? 'border-brand-400 text-brand-600' : ''}`}
+          >
+            <Filter size={15} /> Filter
+          </button>
+          <button onClick={() => setShowAdd(true)} className="btn-primary">
+            <Plus size={16} /> Add Yarn
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            className="input pl-9"
-            placeholder="Search by brand, name, color…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-        <div className="flex gap-1.5 flex-wrap">
+      {showFilters && (
+        <div className="card p-4 mb-4 flex flex-wrap gap-3 items-end">
+          <div>
+            <label className="label text-xs">Filter by Weight</label>
+            <select className="input text-sm py-1.5" value={filterWeight} onChange={e => setFilterWeight(e.target.value)}>
+              <option value="">All weights</option>
+              {YARN_WEIGHTS.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label text-xs">Filter by Color</label>
+            <input className="input text-sm py-1.5" placeholder="e.g. blue" value={filterColor} onChange={e => setFilterColor(e.target.value)} />
+          </div>
           <button
-            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
-              weightFilter === 'all' ? 'bg-brand-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700'
-            }`}
-            onClick={() => setWeightFilter('all')}
+            onClick={() => { setFilterWeight(''); setFilterColor('') }}
+            className="btn-ghost text-sm py-1.5"
           >
-            All
+            Clear filters
           </button>
-          {YARN_WEIGHTS.map(w => (
-            <button
-              key={w}
-              className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
-                weightFilter === w ? 'bg-brand-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700'
-              }`}
-              onClick={() => setWeightFilter(w)}
-            >
-              {w.charAt(0).toUpperCase() + w.slice(1)}
-            </button>
-          ))}
         </div>
-      </div>
+      )}
 
       {loading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="space-y-3">
           {[1, 2, 3, 4].map(i => (
-            <div key={i} className="card p-5 animate-pulse space-y-3">
-              <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded w-1/2" />
-              <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-2/3" />
-              <div className="h-3 bg-gray-100 dark:bg-gray-800 rounded w-1/3" />
-            </div>
+            <div key={i} className="card p-4 h-16 animate-pulse bg-gray-100 dark:bg-gray-800" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="card p-12 text-center">
+      ) : stash.length === 0 ? (
+        <div className="text-center py-16">
           <Layers size={48} className="mx-auto text-gray-300 dark:text-gray-700 mb-4" />
-          {stash.length === 0 ? (
-            <>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Your stash is empty</h2>
-              <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">
-                Log your yarn inventory to keep track of what you have.
-              </p>
-              <button className="btn-primary" onClick={() => setShowAdd(true)}>
-                <Plus size={16} />
-                Add your first yarn
-              </button>
-            </>
-          ) : (
-            <p className="text-gray-500 dark:text-gray-400">No yarn matches your search</p>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+            {filterWeight || filterColor ? 'No yarn matches your filters' : 'Your stash is empty'}
+          </h2>
+          <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">
+            {filterWeight || filterColor ? 'Try different filters.' : 'Start adding your yarn collection.'}
+          </p>
+          {!filterWeight && !filterColor && (
+            <button onClick={() => setShowAdd(true)} className="btn-primary">
+              <Plus size={16} /> Add Yarn
+            </button>
           )}
         </div>
       ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(entry => (
-            <div key={entry.id} className="card p-5 flex flex-col gap-3 group hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">{entry.brand}</p>
-                  <h3 className="font-semibold text-gray-900 dark:text-white truncate">{entry.name}</h3>
-                </div>
-                <button
-                  onClick={() => handleDelete(entry.id)}
-                  disabled={deletingId === entry.id}
-                  className="btn-ghost p-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600 flex-shrink-0"
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <span className={`badge ${WEIGHT_COLORS[entry.weight] ?? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}`}>
-                  {entry.weight}
-                </span>
-                {entry.color && (
-                  <span className="badge bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-                    🎨 {entry.color}
-                  </span>
-                )}
-              </div>
-
-              <div className="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
-                {entry.yardage && (
-                  <p>📏 {(entry.yardage * entry.quantity).toLocaleString()} yards
-                    {entry.quantity > 1 && ` (${entry.quantity} × ${entry.yardage})`}
-                  </p>
-                )}
-                {entry.quantity > 1 && !entry.yardage && (
-                  <p>Qty: {entry.quantity}</p>
-                )}
-              </div>
-
-              {entry.notes && (
-                <p className="text-xs text-gray-400 dark:text-gray-500 line-clamp-2 italic">
-                  {entry.notes}
-                </p>
-              )}
-            </div>
+        <div className="space-y-2">
+          {stash.map(entry => (
+            <StashCard key={entry.id} entry={entry} onDelete={handleDelete} onUpdate={handleUpdate} />
           ))}
         </div>
       )}
 
-      <Modal open={showAdd} onClose={() => { setShowAdd(false); setError('') }} title="Add Yarn" size="md">
+      {/* Add Yarn Modal */}
+      <Modal open={showAdd} onClose={() => { setShowAdd(false); setForm(defaultForm); setError('') }} title="Add Yarn to Stash">
         {error && (
           <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm">
             {error}
@@ -240,88 +325,43 @@ export default function Stash() {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Brand *</label>
-              <input
-                className="input"
-                placeholder="Malabrigo"
-                value={form.brand}
-                onChange={e => setForm(f => ({ ...f, brand: e.target.value }))}
-                required
-                autoFocus
-              />
+              <input className="input" placeholder="Malabrigo" value={form.brand} onChange={e => setForm(p => ({ ...p, brand: e.target.value }))} required />
             </div>
             <div>
-              <label className="label">Yarn name *</label>
-              <input
-                className="input"
-                placeholder="Rios"
-                value={form.name}
-                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                required
-              />
+              <label className="label">Yarn Name *</label>
+              <input className="input" placeholder="Rios" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} required />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="label">Weight</label>
-              <select
-                className="input"
-                value={form.weight}
-                onChange={e => setForm(f => ({ ...f, weight: e.target.value as StashEntry['weight'] }))}
-              >
-                {YARN_WEIGHTS.map(w => (
-                  <option key={w} value={w}>{w.charAt(0).toUpperCase() + w.slice(1)}</option>
-                ))}
+              <label className="label">Weight *</label>
+              <select className="input" value={form.weight} onChange={e => setForm(p => ({ ...p, weight: e.target.value }))} required>
+                {YARN_WEIGHTS.map(w => <option key={w} value={w}>{w}</option>)}
               </select>
             </div>
             <div>
               <label className="label">Color</label>
-              <input
-                className="input"
-                placeholder="Peacock"
-                value={form.color}
-                onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
-              />
+              <input className="input" placeholder="Peacock (#008080)" value={form.color} onChange={e => setForm(p => ({ ...p, color: e.target.value }))} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="label">Yardage per skein</label>
-              <input
-                type="number"
-                className="input"
-                placeholder="210"
-                value={form.yardage}
-                onChange={e => setForm(f => ({ ...f, yardage: e.target.value }))}
-                min={1}
-              />
+              <input className="input" type="number" min="1" placeholder="400" value={form.yardage} onChange={e => setForm(p => ({ ...p, yardage: e.target.value }))} />
             </div>
             <div>
               <label className="label">Quantity (skeins)</label>
-              <input
-                type="number"
-                className="input"
-                value={form.quantity}
-                onChange={e => setForm(f => ({ ...f, quantity: e.target.value }))}
-                min={1}
-              />
+              <input className="input" type="number" min="1" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
             </div>
           </div>
           <div>
             <label className="label">Notes</label>
-            <textarea
-              className="input resize-none"
-              rows={2}
-              placeholder="Purchased from… dye lot… intended project…"
-              value={form.notes}
-              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-            />
+            <textarea className="input resize-none" rows={2} placeholder="Purchased from, project ideas…" value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
           </div>
-          <div className="flex justify-end gap-3 pt-2">
-            <button type="button" className="btn-secondary" onClick={() => setShowAdd(false)}>
-              Cancel
-            </button>
-            <button type="submit" className="btn-primary" disabled={submitting}>
-              {submitting ? 'Adding…' : 'Add to stash'}
+          <div className="flex justify-end gap-3">
+            <button type="button" onClick={() => setShowAdd(false)} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={submitting} className="btn-primary">
+              {submitting ? 'Adding…' : 'Add to Stash'}
             </button>
           </div>
         </form>
