@@ -34,7 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.ok ? r.json() : Promise.reject(r))
-      .then((data: User) => setUser(data))
+      .then((data: { user: User }) => setUser(data.user))
       .catch(() => logout())
       .finally(() => setLoading(false))
   }, [token, logout])

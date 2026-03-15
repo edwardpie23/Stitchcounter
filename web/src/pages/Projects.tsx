@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Plus, FolderOpen, Yarn, Ruler, ChevronRight, Trash2 } from 'lucide-react'
+import { Plus, FolderOpen, ChevronRight, Trash2 } from 'lucide-react'
 import { useApi } from '../hooks/useApi'
 import Modal from '../components/Modal'
 import type { Project, Pattern } from '../types'
