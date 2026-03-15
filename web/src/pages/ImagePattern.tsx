@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Upload, ImageIcon, Download, Save, Trash2, ChevronLeft,
   ZoomIn, ZoomOut, Paintbrush, ArrowLeft, Grid3x3, ShoppingBag,
+  ChevronUp, ChevronDown, List, X,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -38,15 +39,52 @@ const CRAFT_TYPES = [
   { value: 'cross-stitch', label: 'Cross Stitch' },
 ]
 
+// ─── Utilities ────────────────────────────────────────────────────────────────
+function hexToRgb(hex: string) {
+  const h = hex.replace('#', '')
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  }
+}
+
+function colorDistance(a: string, b: string) {
+  const ra = hexToRgb(a), rb = hexToRgb(b)
+  return Math.sqrt((ra.r - rb.r) ** 2 + (ra.g - rb.g) ** 2 + (ra.b - rb.b) ** 2)
+}
+
+interface RowSegment { count: number; colorIdx: number; color: PaletteColor | undefined }
+
+function generateRowDesc(
+  row: number,
+  width: number,
+  gridData: number[],
+  colors: PaletteColor[],
+): RowSegment[] {
+  const segments: RowSegment[] = []
+  if (!width || !colors.length) return segments
+
+  let count = 1
+  let lastIdx = gridData[row * width] ?? 0
+
+  for (let c = 1; c < width; c++) {
+    const ci = gridData[row * width + c] ?? 0
+    if (ci === lastIdx) {
+      count++
+    } else {
+      segments.push({ count, colorIdx: lastIdx, color: colors[lastIdx] })
+      lastIdx = ci
+      count = 1
+    }
+  }
+  segments.push({ count, colorIdx: lastIdx, color: colors[lastIdx] })
+  return segments
+}
+
 // ─── Canvas Grid Component ────────────────────────────────────────────────────
 function GridCanvas({
-  width,
-  height,
-  gridData,
-  colors,
-  cellSize,
-  selectedColor,
-  onEdit,
+  width, height, gridData, colors, cellSize, selectedColor, onEdit, highlightRow,
 }: {
   width: number
   height: number
@@ -55,6 +93,7 @@ function GridCanvas({
   cellSize: number
   selectedColor: number | null
   onEdit: (idx: number) => void
+  highlightRow: number | null
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const isDrawing = useRef(false)
@@ -112,7 +151,16 @@ function GridCanvas({
         ctx.stroke()
       }
     }
-  }, [width, height, gridData, colors, cellSize])
+
+    // Highlight current row
+    if (highlightRow !== null && highlightRow >= 0 && highlightRow < height) {
+      ctx.fillStyle = 'rgba(59, 130, 246, 0.15)'
+      ctx.fillRect(0, highlightRow * cellSize, width * cellSize, cellSize)
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)'
+      ctx.lineWidth = 2
+      ctx.strokeRect(1, highlightRow * cellSize + 1, width * cellSize - 2, cellSize - 2)
+    }
+  }, [width, height, gridData, colors, cellSize, highlightRow])
 
   useEffect(() => { draw() }, [draw])
 
@@ -120,9 +168,7 @@ function GridCanvas({
     const rect = canvasRef.current!.getBoundingClientRect()
     const col = Math.floor((e.clientX - rect.left) / cellSize)
     const row = Math.floor((e.clientY - rect.top) / cellSize)
-    if (col >= 0 && col < width && row >= 0 && row < height) {
-      return row * width + col
-    }
+    if (col >= 0 && col < width && row >= 0 && row < height) return row * width + col
     return -1
   }
 
@@ -157,14 +203,8 @@ function GridCanvas({
 
 // ─── Palette Panel ────────────────────────────────────────────────────────────
 function PalettePanel({
-  colors,
-  selectedColor,
-  onSelect,
-  gridData,
-  gridWidth,
-  gridHeight,
-  yardagePerSkein,
-  onYardageChange,
+  colors, selectedColor, onSelect, gridData, gridWidth, gridHeight,
+  yardagePerSkein, onYardageChange, onRemoveColor,
 }: {
   colors: PaletteColor[]
   selectedColor: number | null
@@ -174,41 +214,45 @@ function PalettePanel({
   gridHeight: number
   yardagePerSkein: number
   onYardageChange: (v: number) => void
+  onRemoveColor: (idx: number) => void
 }) {
   const totalCells = gridWidth * gridHeight
 
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
-          Color Palette
-        </h3>
-        <p className="text-xs text-gray-400 mb-3">Click a color to paint on the grid</p>
+        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Color Palette</h3>
+        <p className="text-xs text-gray-400 mb-3">Click color to paint · × to remove</p>
         <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
           {colors.map((c, i) => (
-            <button
-              key={i}
-              onClick={() => onSelect(selectedColor === i ? null : i)}
-              className={`w-full flex items-center gap-2.5 p-2 rounded-xl text-left transition-all ${
-                selectedColor === i
-                  ? 'ring-2 ring-brand-500 bg-brand-50 dark:bg-brand-950/40'
-                  : 'hover:bg-gray-100 dark:hover:bg-gray-800'
-              }`}
-            >
-              <div
-                className="w-6 h-6 rounded-lg flex-shrink-0 border border-gray-200 dark:border-gray-600"
-                style={{ backgroundColor: c.hex }}
-              />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">
-                  DMC {c.dmcCode}
-                </p>
-                <p className="text-xs text-gray-400 truncate">{c.dmcName}</p>
-              </div>
-              <span className="text-xs text-gray-400 flex-shrink-0">
-                {c.count} st
-              </span>
-            </button>
+            <div key={i} className="flex items-center gap-1">
+              <button
+                onClick={() => onSelect(selectedColor === i ? null : i)}
+                className={`flex-1 flex items-center gap-2.5 p-2 rounded-xl text-left transition-all ${
+                  selectedColor === i
+                    ? 'ring-2 ring-brand-500 bg-brand-50 dark:bg-brand-950/40'
+                    : 'hover:bg-gray-100 dark:hover:bg-gray-800'
+                }`}
+              >
+                <div
+                  className="w-6 h-6 rounded-lg flex-shrink-0 border border-gray-200 dark:border-gray-600"
+                  style={{ backgroundColor: c.hex }}
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">DMC {c.dmcCode}</p>
+                  <p className="text-xs text-gray-400 truncate">{c.dmcName}</p>
+                </div>
+                <span className="text-xs text-gray-400 flex-shrink-0">{c.count} st</span>
+              </button>
+              <button
+                onClick={() => onRemoveColor(i)}
+                disabled={colors.length <= 1}
+                className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Remove color (replaces with nearest)"
+              >
+                <X size={13} />
+              </button>
+            </div>
           ))}
         </div>
         {selectedColor !== null && (
@@ -240,7 +284,6 @@ function PalettePanel({
         <div className="space-y-1.5">
           {colors.map((c, i) => {
             const pct = totalCells > 0 ? (c.count / totalCells) * 100 : 0
-            // Approximate: 1 stitch ≈ 1 yard for worsted (rough estimate)
             const yardsNeeded = Math.ceil(c.count * 1.2)
             const skeins = Math.ceil(yardsNeeded / yardagePerSkein)
             return (
@@ -263,10 +306,71 @@ function PalettePanel({
             )
           })}
         </div>
-        <p className="text-xs text-gray-400 mt-2 italic">
-          Estimate based on ~1.2 yds/stitch. Adjust per your gauge.
-        </p>
+        <p className="text-xs text-gray-400 mt-2 italic">Estimate based on ~1.2 yds/stitch. Adjust per your gauge.</p>
       </div>
+    </div>
+  )
+}
+
+// ─── Written Description Panel ────────────────────────────────────────────────
+function WrittenDescription({
+  width, height, gridData, colors, currentRow, onRowClick,
+}: {
+  width: number
+  height: number
+  gridData: number[]
+  colors: PaletteColor[]
+  currentRow: number | null
+  onRowClick: (row: number) => void
+}) {
+  const currentRowRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    currentRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }, [currentRow])
+
+  if (!width || !height || !colors.length) {
+    return <p className="text-xs text-gray-400 text-center py-8">No pattern loaded.</p>
+  }
+
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-gray-400 mb-3">Click a row to set it as your working row.</p>
+      {Array.from({ length: height }, (_, row) => {
+        const segments = generateRowDesc(row, width, gridData, colors)
+        const isCurrent = currentRow === row
+        return (
+          <div
+            key={row}
+            ref={isCurrent ? currentRowRef : undefined}
+            onClick={() => onRowClick(row)}
+            className={`p-2 rounded-lg cursor-pointer transition-colors text-xs border ${
+              isCurrent
+                ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700'
+                : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800'
+            }`}
+          >
+            <p className={`font-semibold mb-1 ${isCurrent ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}>
+              Row {row + 1}{isCurrent ? ' ← working here' : ''}
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {segments.map((seg, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-0.5"
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-sm border border-gray-300 dark:border-gray-600 flex-shrink-0"
+                    style={{ backgroundColor: seg.color?.hex ?? '#ccc' }}
+                  />
+                  <span className="font-medium text-gray-700 dark:text-gray-300">{seg.count}</span>
+                  <span className="text-gray-400">{seg.color?.dmcName || `DMC ${seg.color?.dmcCode}` || `Color ${seg.colorIdx}`}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -302,6 +406,14 @@ export default function ImagePattern() {
   const [saveMsg, setSaveMsg] = useState('')
   const [yardagePerSkein, setYardagePerSkein] = useState(200)
 
+  // New feature state
+  const [currentRow, setCurrentRow] = useState<number | null>(null)
+  const [sidebarTab, setSidebarTab] = useState<'colors' | 'rows'>('colors')
+  const [includePDFDesc, setIncludePDFDesc] = useState(false)
+  const [resizeW, setResizeW] = useState(50)
+  const [resizeH, setResizeH] = useState(50)
+  const gridScrollRef = useRef<HTMLDivElement>(null)
+
   // Saved patterns
   const [savedPatterns, setSavedPatterns] = useState<SavedPattern[]>([])
   const [loadingPatterns, setLoadingPatterns] = useState(false)
@@ -313,6 +425,18 @@ export default function ImagePattern() {
     for (const idx of gridData) counts[idx] = (counts[idx] || 0) + 1
     setColors(prev => prev.map((c, i) => ({ ...c, count: counts[i] || 0 })))
   }, [gridData]) // eslint-disable-line
+
+  // Sync resize inputs when result changes
+  useEffect(() => {
+    if (result) { setResizeW(result.width); setResizeH(result.height) }
+  }, [result?.width, result?.height]) // eslint-disable-line
+
+  // Scroll grid canvas to current row
+  useEffect(() => {
+    if (currentRow === null || !gridScrollRef.current) return
+    const scrollTop = currentRow * cellSize - 100
+    gridScrollRef.current.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' })
+  }, [currentRow, cellSize])
 
   const loadSavedPatterns = async () => {
     setLoadingPatterns(true)
@@ -372,8 +496,8 @@ export default function ImagePattern() {
       setResult(data)
       setGridData([...data.gridData])
       setColors(data.colors)
+      setCurrentRow(null)
 
-      // Auto cell size based on grid
       const maxDim = Math.max(data.width, data.height)
       setCellSize(maxDim <= 30 ? 16 : maxDim <= 60 ? 10 : maxDim <= 100 ? 7 : 5)
 
@@ -393,6 +517,48 @@ export default function ImagePattern() {
       return next
     })
   }, [selectedColor])
+
+  const handleResizeGrid = (newW: number, newH: number) => {
+    if (!result) return
+    newW = Math.min(200, Math.max(5, newW))
+    newH = Math.min(200, Math.max(5, newH))
+    const oldW = result.width
+    const oldH = result.height
+    const newGrid = new Array(newW * newH).fill(0)
+    for (let r = 0; r < Math.min(newH, oldH); r++) {
+      for (let c = 0; c < Math.min(newW, oldW); c++) {
+        newGrid[r * newW + c] = gridData[r * oldW + c] ?? 0
+      }
+    }
+    setResult(prev => prev ? { ...prev, width: newW, height: newH } : null)
+    setGridData(newGrid)
+    if (currentRow !== null && currentRow >= newH) setCurrentRow(newH - 1)
+  }
+
+  const handleRemoveColor = (removeIdx: number) => {
+    if (colors.length <= 1) return
+    const removedColor = colors[removeIdx]
+    const remaining = colors.filter((_, i) => i !== removeIdx)
+
+    // Find nearest remaining color by RGB distance
+    let nearestNewIdx = 0
+    let nearestDist = Infinity
+    remaining.forEach((c, i) => {
+      const d = colorDistance(removedColor.hex, c.hex)
+      if (d < nearestDist) { nearestDist = d; nearestNewIdx = i }
+    })
+
+    // Map old indices to new indices
+    const mapping = colors.map((_, oldIdx) => {
+      if (oldIdx === removeIdx) return nearestNewIdx
+      return oldIdx < removeIdx ? oldIdx : oldIdx - 1
+    })
+
+    setGridData(prev => prev.map(ci => mapping[ci] ?? 0))
+    setColors(remaining)
+    if (selectedColor === removeIdx) setSelectedColor(null)
+    else if (selectedColor !== null && selectedColor > removeIdx) setSelectedColor(selectedColor - 1)
+  }
 
   const handleSave = async () => {
     if (!result || !patternName.trim()) return
@@ -418,7 +584,7 @@ export default function ImagePattern() {
       setSaveMsg('Saved!')
       await loadSavedPatterns()
       setTimeout(() => setSaveMsg(''), 3000)
-    } catch (err) {
+    } catch {
       setSaveMsg('Save failed')
     } finally {
       setSaving(false)
@@ -429,7 +595,7 @@ export default function ImagePattern() {
     if (!result) return
     const { jsPDF } = await import('jspdf')
 
-    const cellPx = 4 // points per cell in PDF
+    const cellPx = 4
     const margin = 20
     const paletteWidth = 80
     const canvasW = result.width * cellPx
@@ -461,17 +627,11 @@ export default function ImagePattern() {
     // Draw grid cells
     for (let row = 0; row < result.height; row++) {
       for (let col = 0; col < result.width; col++) {
-        const idx = row * result.width + col
-        const colorIdx = gridData[idx] ?? 0
+        const colorIdx = gridData[row * result.width + col] ?? 0
         const color = colors[colorIdx]
         if (!color) continue
-
-        const hex = color.hex.replace('#', '')
-        const r = parseInt(hex.slice(0, 2), 16) / 255
-        const g = parseInt(hex.slice(2, 4), 16) / 255
-        const b = parseInt(hex.slice(4, 6), 16) / 255
-
-        doc.setFillColor(r * 255, g * 255, b * 255)
+        const { r, g, b } = hexToRgb(color.hex)
+        doc.setFillColor(r, g, b)
         doc.rect(margin + col * cellPx, gridTop + row * cellPx, cellPx, cellPx, 'F')
       }
     }
@@ -479,12 +639,10 @@ export default function ImagePattern() {
     // Grid lines every 10
     doc.setDrawColor(0, 0, 0)
     doc.setLineWidth(0.3)
-    for (let col = 0; col <= result.width; col += 10) {
+    for (let col = 0; col <= result.width; col += 10)
       doc.line(margin + col * cellPx, gridTop, margin + col * cellPx, gridTop + result.height * cellPx)
-    }
-    for (let row = 0; row <= result.height; row += 10) {
+    for (let row = 0; row <= result.height; row += 10)
       doc.line(margin, gridTop + row * cellPx, margin + result.width * cellPx, gridTop + row * cellPx)
-    }
 
     // Color legend
     const legendX = margin + canvasW + 10
@@ -494,10 +652,7 @@ export default function ImagePattern() {
     doc.setFont('helvetica', 'normal')
     colors.forEach((c, i) => {
       const y = gridTop + 12 + i * 10
-      const hex = c.hex.replace('#', '')
-      const r = parseInt(hex.slice(0, 2), 16)
-      const g = parseInt(hex.slice(2, 4), 16)
-      const b = parseInt(hex.slice(4, 6), 16)
+      const { r, g, b } = hexToRgb(c.hex)
       doc.setFillColor(r, g, b)
       doc.rect(legendX, y - 6, 7, 7, 'F')
       doc.setDrawColor(180)
@@ -511,14 +666,53 @@ export default function ImagePattern() {
       doc.setTextColor(0)
     })
 
-    // Row numbers
+    // Row/col numbers
     doc.setFontSize(5)
     doc.setTextColor(120)
-    for (let row = 0; row < result.height; row += 10) {
+    for (let row = 0; row < result.height; row += 10)
       doc.text(`${row + 1}`, margin - 8, gridTop + row * cellPx + cellPx)
-    }
-    for (let col = 0; col < result.width; col += 10) {
+    for (let col = 0; col < result.width; col += 10)
       doc.text(`${col + 1}`, margin + col * cellPx, gridTop - 2)
+
+    // Written description page
+    if (includePDFDesc) {
+      doc.addPage()
+      const pw = doc.internal.pageSize.getWidth()
+      const ph = doc.internal.pageSize.getHeight()
+      let yPos = margin
+
+      doc.setFontSize(12)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(0)
+      doc.text(`${patternName} — Row-by-Row Instructions`, margin, yPos)
+      yPos += 6
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(120)
+      doc.text(`${result.width} stitches wide · Read left to right`, margin, yPos + 6)
+      yPos += 18
+
+      for (let row = 0; row < result.height; row++) {
+        const segments = generateRowDesc(row, result.width, gridData, colors)
+        const descText = segments
+          .map(s => `${s.count} ${s.color?.dmcName || `DMC ${s.color?.dmcCode}`}`)
+          .join('  ·  ')
+
+        if (yPos > ph - margin - 12) {
+          doc.addPage()
+          yPos = margin
+        }
+
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(40)
+        doc.text(`Row ${row + 1}`, margin, yPos)
+
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(80)
+        const lines = doc.splitTextToSize(descText, pw - margin * 2 - 32)
+        doc.text(lines, margin + 32, yPos)
+        yPos += Math.max(10, lines.length * 8) + 3
+      }
     }
 
     doc.save(`${patternName.replace(/\s+/g, '_')}_pattern.pdf`)
@@ -544,6 +738,7 @@ export default function ImagePattern() {
     setColors(p.colors)
     setPatternName(p.name)
     setSettings(s => ({ ...s, craftType: p.craftType }))
+    setCurrentRow(null)
     const maxDim = Math.max(p.width, p.height)
     setCellSize(maxDim <= 30 ? 16 : maxDim <= 60 ? 10 : maxDim <= 100 ? 7 : 5)
     setStep('editor')
@@ -707,7 +902,6 @@ export default function ImagePattern() {
                   <p className="text-xs text-gray-400 mb-3">
                     {p.width} × {p.height} · {p.colors.length} colors · {CRAFT_TYPES.find(c => c.value === p.craftType)?.label ?? p.craftType}
                   </p>
-                  {/* Color swatches preview */}
                   <div className="flex flex-wrap gap-1 mb-3">
                     {p.colors.slice(0, 12).map((c, i) => (
                       <div
@@ -773,6 +967,17 @@ export default function ImagePattern() {
           </button>
         </div>
 
+        {/* PDF description toggle */}
+        <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={includePDFDesc}
+            onChange={e => setIncludePDFDesc(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          Row guide in PDF
+        </label>
+
         <button
           onClick={handleSave}
           disabled={saving}
@@ -787,18 +992,87 @@ export default function ImagePattern() {
         </button>
       </div>
 
-      {/* Grid info bar */}
-      <div className="flex-shrink-0 px-4 py-1.5 bg-gray-50 dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800 flex items-center gap-4 text-xs text-gray-400">
-        <span>{result?.width} × {result?.height} stitches</span>
+      {/* Info bar: resize + stats + row tracker */}
+      <div className="flex-shrink-0 px-4 py-1.5 bg-gray-50 dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800 flex items-center gap-3 text-xs text-gray-400 flex-wrap">
+        {/* Editable grid size */}
+        <div className="flex items-center gap-1">
+          <span>Grid:</span>
+          <input
+            type="number" min="5" max="200"
+            value={resizeW}
+            onChange={e => setResizeW(parseInt(e.target.value) || 5)}
+            onBlur={() => handleResizeGrid(resizeW, resizeH)}
+            onKeyDown={e => e.key === 'Enter' && handleResizeGrid(resizeW, resizeH)}
+            className="w-14 text-xs border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-brand-400"
+            title="Width — press Enter or click away to resize"
+          />
+          <span>×</span>
+          <input
+            type="number" min="5" max="200"
+            value={resizeH}
+            onChange={e => setResizeH(parseInt(e.target.value) || 5)}
+            onBlur={() => handleResizeGrid(resizeW, resizeH)}
+            onKeyDown={e => e.key === 'Enter' && handleResizeGrid(resizeW, resizeH)}
+            className="w-14 text-xs border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-brand-400"
+            title="Height — press Enter or click away to resize"
+          />
+          <span>st</span>
+        </div>
+
+        <span className="text-gray-300 dark:text-gray-700">|</span>
         <span>{colors.length} colors</span>
         <span>{CRAFT_TYPES.find(c => c.value === settings.craftType)?.label}</span>
-        {selectedColor === null && <span className="text-amber-500">Select a color from the palette to edit cells</span>}
+
+        {/* Row tracker */}
+        <div className="flex items-center gap-1 ml-auto">
+          <span className="text-gray-500">Row:</span>
+          <button
+            onClick={() => setCurrentRow(r => r !== null ? Math.max(0, r - 1) : (result ? result.height - 1 : 0))}
+            className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            title="Previous row"
+          >
+            <ChevronUp size={13} />
+          </button>
+          <input
+            type="number"
+            min="1"
+            max={result?.height ?? 1}
+            value={currentRow !== null ? currentRow + 1 : ''}
+            placeholder="—"
+            onChange={e => {
+              const v = parseInt(e.target.value)
+              if (!isNaN(v) && result) setCurrentRow(Math.min(result.height - 1, Math.max(0, v - 1)))
+            }}
+            className="w-12 text-xs text-center border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-brand-400"
+            title="Current row"
+          />
+          <button
+            onClick={() => setCurrentRow(r => r !== null ? Math.min((result?.height ?? 1) - 1, r + 1) : 0)}
+            className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+            title="Next row"
+          >
+            <ChevronDown size={13} />
+          </button>
+          {currentRow !== null && (
+            <button
+              onClick={() => setCurrentRow(null)}
+              className="ml-0.5 text-gray-300 hover:text-gray-500 dark:hover:text-gray-300"
+              title="Clear row tracker"
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
+
+        {selectedColor === null && (
+          <span className="text-amber-500">Select a color from the palette to edit cells</span>
+        )}
       </div>
 
       {/* Main editor area */}
       <div className="flex-1 flex overflow-hidden">
         {/* Grid canvas */}
-        <div className="flex-1 overflow-auto p-4 bg-gray-100 dark:bg-gray-950">
+        <div ref={gridScrollRef} className="flex-1 overflow-auto p-4 bg-gray-100 dark:bg-gray-950">
           <div className="inline-block shadow-lg rounded-lg overflow-hidden">
             {result && (
               <GridCanvas
@@ -809,23 +1083,62 @@ export default function ImagePattern() {
                 cellSize={cellSize}
                 selectedColor={selectedColor}
                 onEdit={handleCellEdit}
+                highlightRow={currentRow}
               />
             )}
           </div>
         </div>
 
-        {/* Palette sidebar */}
-        <div className="w-72 flex-shrink-0 border-l border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-y-auto p-4">
-          <PalettePanel
-            colors={colors}
-            selectedColor={selectedColor}
-            onSelect={setSelectedColor}
-            gridData={gridData}
-            gridWidth={result?.width ?? 0}
-            gridHeight={result?.height ?? 0}
-            yardagePerSkein={yardagePerSkein}
-            onYardageChange={setYardagePerSkein}
-          />
+        {/* Sidebar */}
+        <div className="w-72 flex-shrink-0 border-l border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-col">
+          {/* Tabs */}
+          <div className="flex border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
+            <button
+              onClick={() => setSidebarTab('colors')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
+                sidebarTab === 'colors'
+                  ? 'text-brand-600 border-b-2 border-brand-500'
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+              }`}
+            >
+              <Paintbrush size={13} /> Colors
+            </button>
+            <button
+              onClick={() => setSidebarTab('rows')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
+                sidebarTab === 'rows'
+                  ? 'text-brand-600 border-b-2 border-brand-500'
+                  : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
+              }`}
+            >
+              <List size={13} /> Row Guide
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4">
+            {sidebarTab === 'colors' ? (
+              <PalettePanel
+                colors={colors}
+                selectedColor={selectedColor}
+                onSelect={setSelectedColor}
+                gridData={gridData}
+                gridWidth={result?.width ?? 0}
+                gridHeight={result?.height ?? 0}
+                yardagePerSkein={yardagePerSkein}
+                onYardageChange={setYardagePerSkein}
+                onRemoveColor={handleRemoveColor}
+              />
+            ) : (
+              <WrittenDescription
+                width={result?.width ?? 0}
+                height={result?.height ?? 0}
+                gridData={gridData}
+                colors={colors}
+                currentRow={currentRow}
+                onRowClick={setCurrentRow}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>
