@@ -3,35 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import {
   Upload, ImageIcon, Download, Save, Trash2, ChevronLeft,
   ZoomIn, ZoomOut, Paintbrush, ArrowLeft, Grid3x3, ShoppingBag,
-  ChevronUp, ChevronDown, List, X, Eraser,
+  ChevronUp, ChevronDown, List, X, Eraser, Crop,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface PaletteColor {
-  hex: string
-  dmcCode: string
-  dmcName: string
-  count: number
-}
-
-interface ConvertResult {
-  width: number
-  height: number
-  gridData: number[]
-  colors: PaletteColor[]
-}
-
-interface SavedPattern {
-  id: string
-  name: string
-  width: number
-  height: number
-  craftType: string
-  colors: PaletteColor[]
-  createdAt: string
-}
-
+interface PaletteColor { hex: string; dmcCode: string; dmcName: string; count: number }
+interface ConvertResult { width: number; height: number; gridData: number[]; colors: PaletteColor[] }
+interface SavedPattern { id: string; name: string; width: number; height: number; craftType: string; colors: PaletteColor[]; createdAt: string }
 interface RowSegment { count: number; colorIdx: number; color: PaletteColor | undefined }
 
 const CRAFT_TYPES = [
@@ -41,7 +20,6 @@ const CRAFT_TYPES = [
   { value: 'cross-stitch', label: 'Cross Stitch' },
 ]
 
-// Auto-defaults per craft type
 function craftDefaults(craftType: string) {
   if (craftType === 'crochet') return { startFromBottom: true, alternateDirection: true }
   if (craftType === 'knitting') return { startFromBottom: false, alternateDirection: true }
@@ -59,95 +37,200 @@ function colorDistance(a: string, b: string) {
   return Math.sqrt((ra.r - rb.r) ** 2 + (ra.g - rb.g) ** 2 + (ra.b - rb.b) ** 2)
 }
 
-// displayRow is 1-indexed; canvasRow is 0-indexed from top
 function displayToCanvasRow(displayRow: number, totalRows: number, startFromBottom: boolean) {
   return startFromBottom ? totalRows - displayRow : displayRow - 1
 }
 
-// Row 1 never reverses; even rows (2, 4, …) reverse when alternating
 function isRowReversed(displayRow: number, alternateDirection: boolean) {
   return alternateDirection && displayRow % 2 === 0
 }
 
-function generateRowDesc(
-  canvasRow: number,
-  width: number,
-  gridData: number[],
-  colors: PaletteColor[],
-  reverse = false,
-): RowSegment[] {
+function generateRowDesc(canvasRow: number, width: number, gridData: number[], colors: PaletteColor[], reverse = false): RowSegment[] {
   const segments: RowSegment[] = []
   if (!width || !colors.length) return segments
-
   const base = canvasRow * width
   const idxAt = (i: number) => gridData[base + (reverse ? width - 1 - i : i)] ?? 0
-
-  let lastColorIdx = idxAt(0)
-  let count = 1
-
+  let lastColorIdx = idxAt(0), count = 1
   for (let i = 1; i < width; i++) {
     const ci = idxAt(i)
-    if (ci === lastColorIdx) { count++ }
-    else {
-      segments.push({ count, colorIdx: lastColorIdx, color: colors[lastColorIdx] })
-      lastColorIdx = ci; count = 1
-    }
+    if (ci === lastColorIdx) { count++ } else { segments.push({ count, colorIdx: lastColorIdx, color: colors[lastColorIdx] }); lastColorIdx = ci; count = 1 }
   }
   segments.push({ count, colorIdx: lastColorIdx, color: colors[lastColorIdx] })
   return segments
 }
 
-// ─── Background removal (canvas flood-fill from corners) ─────────────────────
 async function removeBackgroundFromUrl(url: string, tolerance: number): Promise<Blob> {
   const img = new Image()
   await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = url })
-
   const MAX = 1500
   let w = img.naturalWidth, h = img.naturalHeight
   if (w > MAX || h > MAX) { const s = MAX / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s) }
-
   const canvas = document.createElement('canvas')
   canvas.width = w; canvas.height = h
   const ctx = canvas.getContext('2d')!
   ctx.drawImage(img, 0, 0, w, h)
-
   const imageData = ctx.getImageData(0, 0, w, h)
   const data = imageData.data
-
-  // Average background color from all 4 corners
   const corners = [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1]]
   let rS = 0, gS = 0, bS = 0
   for (const [x, y] of corners) { const i = (y * w + x) * 4; rS += data[i]; gS += data[i + 1]; bS += data[i + 2] }
   const bgR = rS / 4, bgG = gS / 4, bgB = bS / 4
-
-  const thresh = tolerance * 2.55 // 0-100 → 0-255
+  const thresh = tolerance * 2.55
   const visited = new Uint8Array(w * h)
   const queue: number[] = []
-
-  for (const [x, y] of corners) {
-    const pi = y * w + x
-    if (!visited[pi]) { visited[pi] = 1; queue.push(pi) }
-  }
-
+  for (const [x, y] of corners) { const pi = y * w + x; if (!visited[pi]) { visited[pi] = 1; queue.push(pi) } }
   let head = 0
   while (head < queue.length) {
     const pi = queue[head++]
     const x = pi % w, y = Math.floor(pi / w)
-    data[pi * 4 + 3] = 0 // transparent
-
+    data[pi * 4 + 3] = 0
     for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
       const nx = x + dx, ny = y + dy
       if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue
       const ni = ny * w + nx
       if (visited[ni]) continue
       const di = ni * 4
-      const dist = Math.sqrt((data[di] - bgR) ** 2 + (data[di + 1] - bgG) ** 2 + (data[di + 2] - bgB) ** 2)
-      if (dist <= thresh) { visited[ni] = 1; queue.push(ni) }
+      if (Math.sqrt((data[di] - bgR) ** 2 + (data[di + 1] - bgG) ** 2 + (data[di + 2] - bgB) ** 2) <= thresh) {
+        visited[ni] = 1; queue.push(ni)
+      }
     }
   }
-
   ctx.putImageData(imageData, 0, 0)
   return new Promise<Blob>(res => canvas.toBlob(b => res(b!), 'image/png'))
+}
+
+// ─── Image Placement / Crop Editor ───────────────────────────────────────────
+function ImagePlacementEditor({
+  imageUrl, gridW, gridH, onConfirm, onCancel,
+}: {
+  imageUrl: string; gridW: number; gridH: number
+  onConfirm: (blob: Blob) => void; onCancel: () => void
+}) {
+  const MAX = 500
+  const aspect = Math.max(0.2, Math.min(5, gridW / gridH))
+  const vpW = aspect >= 1 ? MAX : Math.max(180, Math.round(MAX * aspect))
+  const vpH = aspect <= 1 ? MAX : Math.max(180, Math.round(MAX / aspect))
+  const VIEWPORT_W = Math.min(MAX, vpW)
+  const VIEWPORT_H = Math.min(460, vpH)
+
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 })
+  const dragging = useRef(false)
+  const lastMouse = useRef({ x: 0, y: 0 })
+
+  const fitImage = useCallback(() => {
+    const img = imgRef.current
+    if (!img || !img.naturalWidth) return
+    const fitScale = Math.min(VIEWPORT_W / img.naturalWidth, VIEWPORT_H / img.naturalHeight)
+    setTransform({
+      x: (VIEWPORT_W - img.naturalWidth * fitScale) / 2,
+      y: (VIEWPORT_H - img.naturalHeight * fitScale) / 2,
+      scale: fitScale,
+    })
+  }, [VIEWPORT_W, VIEWPORT_H])
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    dragging.current = true
+    lastMouse.current = { x: e.clientX, y: e.clientY }
+    e.preventDefault()
+  }
+
+  useEffect(() => {
+    const mm = (e: MouseEvent) => {
+      if (!dragging.current) return
+      const dx = e.clientX - lastMouse.current.x, dy = e.clientY - lastMouse.current.y
+      lastMouse.current = { x: e.clientX, y: e.clientY }
+      setTransform(t => ({ ...t, x: t.x + dx, y: t.y + dy }))
+    }
+    const mu = () => { dragging.current = false }
+    window.addEventListener('mousemove', mm)
+    window.addEventListener('mouseup', mu)
+    return () => { window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu) }
+  }, [])
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault()
+    const factor = e.deltaY < 0 ? 1.12 : 0.9
+    setTransform(t => {
+      const newScale = Math.min(12, Math.max(0.05, t.scale * factor))
+      const cx = VIEWPORT_W / 2, cy = VIEWPORT_H / 2
+      return { scale: newScale, x: cx + (t.x - cx) * (newScale / t.scale), y: cy + (t.y - cy) * (newScale / t.scale) }
+    })
+  }
+
+  const zoomBy = (factor: number) => {
+    setTransform(t => {
+      const newScale = Math.min(12, Math.max(0.05, t.scale * factor))
+      const cx = VIEWPORT_W / 2, cy = VIEWPORT_H / 2
+      return { scale: newScale, x: cx + (t.x - cx) * (newScale / t.scale), y: cy + (t.y - cy) * (newScale / t.scale) }
+    })
+  }
+
+  const handleConfirm = () => {
+    const img = imgRef.current
+    if (!img) return
+    const canvas = document.createElement('canvas')
+    canvas.width = VIEWPORT_W; canvas.height = VIEWPORT_H
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, VIEWPORT_W, VIEWPORT_H)
+    ctx.save()
+    ctx.translate(transform.x, transform.y)
+    ctx.scale(transform.scale, transform.scale)
+    ctx.drawImage(img, 0, 0)
+    ctx.restore()
+    canvas.toBlob(b => { if (b) onConfirm(b) }, 'image/png')
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-gray-900 rounded-2xl p-5 shadow-2xl">
+        <div className="mb-3">
+          <h3 className="font-semibold text-gray-900 dark:text-white">Position &amp; Crop Image</h3>
+          <p className="text-xs text-gray-400 mt-0.5">Drag to pan · Scroll or buttons to zoom · The bordered area is what gets converted</p>
+        </div>
+
+        {/* Viewport */}
+        <div
+          className="relative overflow-hidden rounded-xl border-2 border-blue-400 cursor-grab active:cursor-grabbing select-none"
+          style={{ width: VIEWPORT_W, height: VIEWPORT_H, backgroundColor: '#e5e7eb' }}
+          onMouseDown={handleMouseDown}
+          onWheel={handleWheel}
+        >
+          {/* Stitch grid overlay */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              backgroundImage: 'linear-gradient(rgba(0,0,0,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.08) 1px, transparent 1px)',
+              backgroundSize: `${VIEWPORT_W / Math.max(1, gridW)}px ${VIEWPORT_H / Math.max(1, gridH)}px`,
+            }}
+          />
+          <img
+            ref={imgRef}
+            src={imageUrl}
+            onLoad={fitImage}
+            style={{
+              position: 'absolute', top: 0, left: 0,
+              transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+              transformOrigin: '0 0',
+              userSelect: 'none', pointerEvents: 'none', maxWidth: 'none',
+            }}
+          />
+        </div>
+
+        <div className="flex items-center gap-2 mt-4 flex-wrap">
+          <button onClick={() => zoomBy(1.2)} className="btn-ghost text-sm flex items-center gap-1"><ZoomIn size={13} /> Zoom In</button>
+          <button onClick={() => zoomBy(0.83)} className="btn-ghost text-sm flex items-center gap-1"><ZoomOut size={13} /> Zoom Out</button>
+          <button onClick={fitImage} className="btn-ghost text-sm">Fit</button>
+          <div className="flex-1" />
+          <button onClick={onCancel} className="btn-secondary text-sm">Cancel</button>
+          <button onClick={handleConfirm} className="btn-primary text-sm flex items-center gap-1.5">
+            <ImageIcon size={13} /> Use This Area
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ─── Canvas Grid Component ────────────────────────────────────────────────────
@@ -166,7 +249,6 @@ function GridCanvas({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-
     for (let row = 0; row < height; row++) {
       for (let col = 0; col < width; col++) {
         const colorIdx = gridData[row * width + col] ?? 0
@@ -174,19 +256,16 @@ function GridCanvas({
         ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize)
       }
     }
-
     if (cellSize >= 6) {
       ctx.strokeStyle = 'rgba(0,0,0,0.15)'; ctx.lineWidth = 0.5
       for (let col = 0; col <= width; col++) { ctx.beginPath(); ctx.moveTo(col * cellSize, 0); ctx.lineTo(col * cellSize, height * cellSize); ctx.stroke() }
       for (let row = 0; row <= height; row++) { ctx.beginPath(); ctx.moveTo(0, row * cellSize); ctx.lineTo(width * cellSize, row * cellSize); ctx.stroke() }
     }
-
     if (cellSize >= 4) {
       ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1
       for (let col = 0; col <= width; col += 10) { ctx.beginPath(); ctx.moveTo(col * cellSize, 0); ctx.lineTo(col * cellSize, height * cellSize); ctx.stroke() }
       for (let row = 0; row <= height; row += 10) { ctx.beginPath(); ctx.moveTo(0, row * cellSize); ctx.lineTo(width * cellSize, row * cellSize); ctx.stroke() }
     }
-
     if (highlightRow !== null && highlightRow >= 0 && highlightRow < height) {
       ctx.fillStyle = 'rgba(59,130,246,0.15)'
       ctx.fillRect(0, highlightRow * cellSize, width * cellSize, cellSize)
@@ -229,18 +308,19 @@ function GridCanvas({
 // ─── Palette Panel ────────────────────────────────────────────────────────────
 function PalettePanel({
   colors, selectedColor, onSelect, gridData, gridWidth, gridHeight,
-  yardagePerSkein, onYardageChange, onRemoveColor,
+  yardagePerSkein, onYardageChange, onRemoveColor, onChangeColor,
 }: {
   colors: PaletteColor[]; selectedColor: number | null; onSelect: (idx: number | null) => void
   gridData: number[]; gridWidth: number; gridHeight: number
-  yardagePerSkein: number; onYardageChange: (v: number) => void; onRemoveColor: (idx: number) => void
+  yardagePerSkein: number; onYardageChange: (v: number) => void
+  onRemoveColor: (idx: number) => void; onChangeColor: (idx: number, hex: string) => void
 }) {
   const totalCells = gridWidth * gridHeight
   return (
     <div className="space-y-4">
       <div>
         <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Color Palette</h3>
-        <p className="text-xs text-gray-400 mb-3">Click color to paint · × to remove</p>
+        <p className="text-xs text-gray-400 mb-3">Click swatch to change color · Click row to paint · × to remove</p>
         <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
           {colors.map((c, i) => (
             <div key={i} className="flex items-center gap-1">
@@ -250,7 +330,20 @@ function PalettePanel({
                   selectedColor === i ? 'ring-2 ring-brand-500 bg-brand-50 dark:bg-brand-950/40' : 'hover:bg-gray-100 dark:hover:bg-gray-800'
                 }`}
               >
-                <div className="w-6 h-6 rounded-lg flex-shrink-0 border border-gray-200 dark:border-gray-600" style={{ backgroundColor: c.hex }} />
+                {/* Color swatch — click to open native color picker */}
+                <div
+                  className="relative w-6 h-6 rounded-lg flex-shrink-0 border-2 border-gray-200 dark:border-gray-600 overflow-hidden"
+                  style={{ backgroundColor: c.hex }}
+                  title="Click to change this color"
+                >
+                  <input
+                    type="color"
+                    value={c.hex}
+                    onChange={e => onChangeColor(i, e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium text-gray-800 dark:text-gray-200 truncate">DMC {c.dmcCode}</p>
                   <p className="text-xs text-gray-400 truncate">{c.dmcName}</p>
@@ -261,7 +354,7 @@ function PalettePanel({
                 onClick={() => onRemoveColor(i)}
                 disabled={colors.length <= 1}
                 className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
-                title="Remove color (fills with nearest)"
+                title="Remove color (replaces with nearest)"
               >
                 <X size={13} />
               </button>
@@ -282,11 +375,9 @@ function PalettePanel({
         </div>
         <div className="mb-3">
           <label className="text-xs text-gray-500 dark:text-gray-400 block mb-1">Yards per skein</label>
-          <input
-            type="number" min="1" value={yardagePerSkein}
+          <input type="number" min="1" value={yardagePerSkein}
             onChange={e => onYardageChange(Math.max(1, parseInt(e.target.value) || 200))}
-            className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
+            className="w-full text-sm border border-gray-200 dark:border-gray-700 rounded-lg px-2 py-1.5 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500" />
         </div>
         <div className="space-y-1.5">
           {colors.map((c, i) => {
@@ -327,32 +418,20 @@ function WrittenDescription({
   onStartFromBottomChange: (v: boolean) => void; onAlternateChange: (v: boolean) => void
 }) {
   const currentRowRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    currentRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  }, [currentRow])
+  useEffect(() => { currentRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }, [currentRow])
 
   return (
     <div>
-      {/* Settings */}
       <div className="space-y-2 mb-4 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
         <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox" checked={startFromBottom}
-            onChange={e => onStartFromBottomChange(e.target.checked)}
-            className="rounded border-gray-300"
-          />
+          <input type="checkbox" checked={startFromBottom} onChange={e => onStartFromBottomChange(e.target.checked)} className="rounded border-gray-300" />
           <span className="text-xs text-gray-700 dark:text-gray-300">Row 1 starts at the <strong>bottom</strong></span>
         </label>
         <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input
-            type="checkbox" checked={alternateDirection}
-            onChange={e => onAlternateChange(e.target.checked)}
-            className="rounded border-gray-300"
-          />
+          <input type="checkbox" checked={alternateDirection} onChange={e => onAlternateChange(e.target.checked)} className="rounded border-gray-300" />
           <span className="text-xs text-gray-700 dark:text-gray-300">Alternating direction (even rows go ←)</span>
         </label>
-        <p className="text-xs text-gray-400">Click any row to track it. ↑/↓ keys to navigate.</p>
+        <p className="text-xs text-gray-400">Click a row to track it. ↑/↓ keys navigate.</p>
       </div>
 
       {(!width || !height || !colors.length) ? (
@@ -360,56 +439,36 @@ function WrittenDescription({
       ) : (
         <div className="space-y-1">
           {Array.from({ length: height }, (_, i) => {
-            // displayRow is 1-indexed (1 = first row to work)
             const displayRow = i + 1
             const canvasRow = displayToCanvasRow(displayRow, height, startFromBottom)
             const reversed = isRowReversed(displayRow, alternateDirection)
-            const isCurrent = currentRow === i // currentRow is 0-indexed display row
+            const isCurrent = currentRow === i
             const segments = generateRowDesc(canvasRow, width, gridData, colors, reversed)
-
             return (
               <div
                 key={i}
                 ref={isCurrent ? currentRowRef : undefined}
                 onClick={() => onRowClick(i)}
                 className={`p-2.5 rounded-xl cursor-pointer transition-colors border ${
-                  isCurrent
-                    ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700'
-                    : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800'
+                  isCurrent ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700' : 'border-transparent hover:bg-gray-50 dark:hover:bg-gray-800'
                 }`}
               >
-                {/* Row header */}
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className={`text-xs font-bold ${isCurrent ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}>
                     Row {displayRow}
                   </span>
-                  <span className="text-xs text-gray-400">
-                    {reversed ? '← right to left' : '→ left to right'}
-                  </span>
-                  {startFromBottom && (
-                    <span className="text-xs text-gray-300 dark:text-gray-600 ml-auto">
-                      {displayRow === 1 ? 'bottom' : displayRow === height ? 'top' : ''}
-                    </span>
+                  <span className="text-xs text-gray-400">{reversed ? '← right to left' : '→ left to right'}</span>
+                  {startFromBottom && (displayRow === 1 || displayRow === height) && (
+                    <span className="text-xs text-gray-300 dark:text-gray-600 ml-auto">{displayRow === 1 ? 'bottom' : 'top'}</span>
                   )}
-                  {isCurrent && (
-                    <span className="text-xs bg-blue-500 text-white rounded px-1.5 py-0.5 ml-auto">working</span>
-                  )}
+                  {isCurrent && <span className="text-xs bg-blue-500 text-white rounded px-1.5 py-0.5 ml-auto">working</span>}
                 </div>
-
-                {/* Stacked segments — each on its own line */}
                 <div className="space-y-1">
                   {segments.map((seg, si) => (
                     <div key={si} className="flex items-center gap-2">
-                      <div
-                        className="w-3.5 h-3.5 rounded-sm border border-gray-300 dark:border-gray-600 flex-shrink-0"
-                        style={{ backgroundColor: seg.color?.hex ?? '#ccc' }}
-                      />
-                      <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 tabular-nums w-8">
-                        {seg.count}
-                      </span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                        {seg.color?.dmcName || `DMC ${seg.color?.dmcCode}` || `Color ${seg.colorIdx}`}
-                      </span>
+                      <div className="w-3.5 h-3.5 rounded-sm border border-gray-300 dark:border-gray-600 flex-shrink-0" style={{ backgroundColor: seg.color?.hex ?? '#ccc' }} />
+                      <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 tabular-nums w-8">{seg.count}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{seg.color?.dmcName || `DMC ${seg.color?.dmcCode}` || `Color ${seg.colorIdx}`}</span>
                     </div>
                   ))}
                 </div>
@@ -431,10 +490,11 @@ export default function ImagePattern() {
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [processedFile, setProcessedFile] = useState<File | null>(null) // after bg removal
+  const [processedFile, setProcessedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [bgTolerance, setBgTolerance] = useState(30)
   const [processingBg, setProcessingBg] = useState(false)
+  const [showPlacementEditor, setShowPlacementEditor] = useState(false)
   const [settings, setSettings] = useState({ gridWidth: 50, gridHeight: 50, numColors: 10, craftType: 'knitting' })
   const [converting, setConverting] = useState(false)
   const [convertError, setConvertError] = useState('')
@@ -450,8 +510,8 @@ export default function ImagePattern() {
   const [saveMsg, setSaveMsg] = useState('')
   const [yardagePerSkein, setYardagePerSkein] = useState(200)
 
-  // Row guide state
-  const [currentRow, setCurrentRow] = useState<number | null>(null) // 0-indexed display row
+  // Row guide
+  const [currentRow, setCurrentRow] = useState<number | null>(null)
   const [startFromBottom, setStartFromBottom] = useState(false)
   const [alternateDirection, setAlternateDirection] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<'colors' | 'rows'>('colors')
@@ -460,7 +520,6 @@ export default function ImagePattern() {
   const [resizeH, setResizeH] = useState(50)
   const gridScrollRef = useRef<HTMLDivElement>(null)
 
-  // Saved patterns
   const [savedPatterns, setSavedPatterns] = useState<SavedPattern[]>([])
   const [loadingPatterns, setLoadingPatterns] = useState(false)
 
@@ -472,29 +531,23 @@ export default function ImagePattern() {
     setColors(prev => prev.map((c, i) => ({ ...c, count: counts[i] || 0 })))
   }, [gridData]) // eslint-disable-line
 
-  // Sync resize inputs when result dimensions change
   useEffect(() => {
     if (result) { setResizeW(result.width); setResizeH(result.height) }
   }, [result?.width, result?.height]) // eslint-disable-line
 
-  // Scroll grid canvas to highlighted canvas row
   useEffect(() => {
     if (currentRow === null || !gridScrollRef.current || !result) return
     const canvasRow = displayToCanvasRow(currentRow + 1, result.height, startFromBottom)
     gridScrollRef.current.scrollTo({ top: Math.max(0, canvasRow * cellSize - 120), behavior: 'smooth' })
   }, [currentRow, cellSize, result, startFromBottom])
 
-  // Keyboard ↑/↓ navigation (only in editor, not when focused on inputs)
   useEffect(() => {
     if (step !== 'editor') return
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
       e.preventDefault()
-
-      // "next row" direction: bottom-up → ArrowUp advances; top-down → ArrowDown advances
       const goNext = (e.key === 'ArrowUp' && startFromBottom) || (e.key === 'ArrowDown' && !startFromBottom)
-
       setCurrentRow(r => {
         const max = (result?.height ?? 1) - 1
         if (r === null) return goNext ? 0 : max
@@ -519,16 +572,13 @@ export default function ImagePattern() {
 
   const handleFileSelect = (file: File) => {
     if (!file.type.startsWith('image/')) return
-    setSelectedFile(file)
-    setProcessedFile(null) // reset processed version
-    setPreviewUrl(URL.createObjectURL(file))
-    setConvertError('')
+    setSelectedFile(file); setProcessedFile(null)
+    setPreviewUrl(URL.createObjectURL(file)); setConvertError('')
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragOver(false)
-    const file = e.dataTransfer.files[0]
-    if (file) handleFileSelect(file)
+    const file = e.dataTransfer.files[0]; if (file) handleFileSelect(file)
   }
 
   const handleRemoveBackground = async () => {
@@ -537,13 +587,17 @@ export default function ImagePattern() {
     try {
       const blob = await removeBackgroundFromUrl(previewUrl, bgTolerance)
       const file = new File([blob], selectedFile?.name ?? 'image.png', { type: 'image/png' })
-      setProcessedFile(file)
-      setPreviewUrl(URL.createObjectURL(blob))
-    } catch (e) {
-      console.error('Background removal failed', e)
-    } finally {
-      setProcessingBg(false)
-    }
+      setProcessedFile(file); setPreviewUrl(URL.createObjectURL(blob))
+    } catch (e) { console.error('Background removal failed', e) }
+    finally { setProcessingBg(false) }
+  }
+
+  // Placement editor confirmation: creates a processed file from the cropped canvas
+  const handlePlacementConfirm = (blob: Blob) => {
+    const file = new File([blob], selectedFile?.name ?? 'image.png', { type: 'image/png' })
+    setProcessedFile(file)
+    setPreviewUrl(URL.createObjectURL(blob))
+    setShowPlacementEditor(false)
   }
 
   const handleConvert = async () => {
@@ -556,24 +610,14 @@ export default function ImagePattern() {
       form.append('width', settings.gridWidth.toString())
       form.append('height', settings.gridHeight.toString())
       form.append('numColors', settings.numColors.toString())
-
       const res = await fetch('/api/image-patterns/convert', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: form,
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
       })
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Conversion failed') }
-
       const data: ConvertResult = await res.json()
-      setResult(data)
-      setGridData([...data.gridData])
-      setColors(data.colors)
-      setCurrentRow(null)
-
+      setResult(data); setGridData([...data.gridData]); setColors(data.colors); setCurrentRow(null)
       const defaults = craftDefaults(settings.craftType)
-      setStartFromBottom(defaults.startFromBottom)
-      setAlternateDirection(defaults.alternateDirection)
-
+      setStartFromBottom(defaults.startFromBottom); setAlternateDirection(defaults.alternateDirection)
       const maxDim = Math.max(data.width, data.height)
       setCellSize(maxDim <= 30 ? 16 : maxDim <= 60 ? 10 : maxDim <= 100 ? 7 : 5)
       setStep('editor')
@@ -589,7 +633,7 @@ export default function ImagePattern() {
 
   const handleResizeGrid = (newW: number, newH: number) => {
     if (!result) return
-    newW = Math.min(200, Math.max(5, newW)); newH = Math.min(200, Math.max(5, newH))
+    newW = Math.min(500, Math.max(1, newW)); newH = Math.min(500, Math.max(1, newH))
     const newGrid = new Array(newW * newH).fill(0)
     for (let r = 0; r < Math.min(newH, result.height); r++)
       for (let c = 0; c < Math.min(newW, result.width); c++)
@@ -610,6 +654,10 @@ export default function ImagePattern() {
     setColors(remaining)
     if (selectedColor === removeIdx) setSelectedColor(null)
     else if (selectedColor !== null && selectedColor > removeIdx) setSelectedColor(selectedColor - 1)
+  }
+
+  const handleChangeColor = (colorIdx: number, newHex: string) => {
+    setColors(prev => prev.map((c, i) => i === colorIdx ? { ...c, hex: newHex } : c))
   }
 
   const handleSave = async () => {
@@ -646,7 +694,6 @@ export default function ImagePattern() {
     doc.setTextColor(0)
 
     const gridTop = margin + 26
-
     for (let row = 0; row < result.height; row++) {
       for (let col = 0; col < result.width; col++) {
         const color = colors[gridData[row * result.width + col] ?? 0]
@@ -676,35 +723,43 @@ export default function ImagePattern() {
     for (let row = 0; row < result.height; row += 10) doc.text(`${row + 1}`, margin - 8, gridTop + row * cellPx + cellPx)
     for (let col = 0; col < result.width; col += 10) doc.text(`${col + 1}`, margin + col * cellPx, gridTop - 2)
 
+    // Written description — fixed layout: row header on its own line, segments below
     if (includePDFDesc) {
       doc.addPage()
       const pw = doc.internal.pageSize.getWidth()
       const ph = doc.internal.pageSize.getHeight()
       let yPos = margin
+
       doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(0)
-      doc.text(`${patternName} — Row-by-Row Instructions`, margin, yPos); yPos += 6
-      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120)
-      doc.text(
-        `${result.width} sts wide · ${startFromBottom ? 'Row 1 = bottom, reading up' : 'Row 1 = top, reading down'} · ${alternateDirection ? 'Alternating direction' : 'All rows left-to-right'}`,
-        margin, yPos + 6,
-      ); yPos += 18
+      doc.text(`${patternName} — Row-by-Row Instructions`, margin, yPos)
+      yPos += 7
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(130)
+      doc.text(`${result.width} sts wide · ${startFromBottom ? 'Row 1 = bottom' : 'Row 1 = top'} · ${alternateDirection ? 'Alternating direction' : 'All rows L→R'}`, margin, yPos)
+      yPos += 14
 
       for (let i = 0; i < result.height; i++) {
+        if (yPos > ph - margin - 16) { doc.addPage(); yPos = margin }
+
         const displayRow = i + 1
         const canvasRow = displayToCanvasRow(displayRow, result.height, startFromBottom)
         const reversed = isRowReversed(displayRow, alternateDirection)
         const segments = generateRowDesc(canvasRow, result.width, gridData, colors, reversed)
-        const direction = reversed ? '← R to L' : '→ L to R'
-        const descText = segments.map(s => `${s.count} ${s.color?.dmcName || `DMC ${s.color?.dmcCode}`}`).join('  ·  ')
 
-        if (yPos > ph - margin - 12) { doc.addPage(); yPos = margin }
+        // Row header — bold, on its own line
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(20)
+        doc.text(`Row ${displayRow}  ${reversed ? '(← R to L)' : '(→ L to R)'}`, margin, yPos)
+        yPos += 8
 
-        doc.setFont('helvetica', 'bold'); doc.setTextColor(40)
-        doc.text(`Row ${displayRow} (${direction})`, margin, yPos)
-        doc.setFont('helvetica', 'normal'); doc.setTextColor(80)
-        const lines = doc.splitTextToSize(descText, pw - margin * 2 - 40)
-        doc.text(lines, margin + 40, yPos)
-        yPos += Math.max(10, lines.length * 8) + 4
+        // Each segment on its own line, indented
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60)
+        for (const seg of segments) {
+          if (yPos > ph - margin - 8) { doc.addPage(); yPos = margin }
+          const label = `${seg.count}  ${seg.color?.dmcName || `DMC ${seg.color?.dmcCode}` || ''}`
+          const lines = doc.splitTextToSize(label, pw - margin * 2 - 16)
+          doc.text(lines, margin + 10, yPos)
+          yPos += lines.length * 7
+        }
+        yPos += 5 // gap between rows
       }
     }
 
@@ -735,13 +790,23 @@ export default function ImagePattern() {
   if (step === 'upload') {
     return (
       <div className="p-6 max-w-3xl mx-auto">
+        {showPlacementEditor && previewUrl && (
+          <ImagePlacementEditor
+            imageUrl={previewUrl}
+            gridW={settings.gridWidth}
+            gridH={settings.gridHeight}
+            onConfirm={handlePlacementConfirm}
+            onCancel={() => setShowPlacementEditor(false)}
+          />
+        )}
+
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Image to Pattern</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Upload a photo and convert it into a yarn pattern with DMC color matching</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Upload + background removal */}
+          {/* Upload + image tools */}
           <div className="space-y-3">
             <div
               onDragOver={e => { e.preventDefault(); setDragOver(true) }}
@@ -749,9 +814,7 @@ export default function ImagePattern() {
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
               className={`relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
-                dragOver
-                  ? 'border-brand-400 bg-brand-50 dark:bg-brand-950/30'
-                  : 'border-gray-200 dark:border-gray-700 hover:border-brand-300 dark:hover:border-brand-600 hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                dragOver ? 'border-brand-400 bg-brand-50 dark:bg-brand-950/30' : 'border-gray-200 dark:border-gray-700 hover:border-brand-300 dark:hover:border-brand-600 hover:bg-gray-50 dark:hover:bg-gray-800/50'
               }`}
             >
               <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
@@ -769,44 +832,45 @@ export default function ImagePattern() {
                   </div>
                   <div>
                     <p className="font-medium text-gray-700 dark:text-gray-300">Drop an image here</p>
-                    <p className="text-sm text-gray-400 mt-1">or click to browse</p>
-                    <p className="text-xs text-gray-400 mt-1">JPG, PNG, GIF up to 10MB</p>
+                    <p className="text-sm text-gray-400 mt-1">or click to browse · JPG, PNG, GIF up to 10MB</p>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Background removal */}
+            {/* Image tools — only when image loaded */}
             {previewUrl && (
-              <div className="card p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Eraser size={14} className="text-gray-500" />
-                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Remove Background</h3>
-                  <span className="text-xs text-gray-400">(flood-fill from corners)</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <label className="text-xs text-gray-500 w-20 flex-shrink-0">Tolerance: {bgTolerance}</label>
-                  <input
-                    type="range" min="5" max="80" value={bgTolerance}
-                    onChange={e => setBgTolerance(parseInt(e.target.value))}
-                    className="flex-1"
-                  />
-                </div>
+              <>
+                {/* Crop / placement tool */}
                 <button
-                  onClick={handleRemoveBackground}
-                  disabled={processingBg}
-                  className="btn-secondary w-full text-sm"
+                  onClick={() => setShowPlacementEditor(true)}
+                  className="btn-secondary w-full text-sm flex items-center gap-2 justify-center"
                 >
-                  {processingBg ? (
-                    <><div className="w-4 h-4 border-2 border-gray-400 border-t-gray-600 rounded-full animate-spin" /> Removing…</>
-                  ) : (
-                    <><Eraser size={14} /> Remove Background</>
-                  )}
+                  <Crop size={14} /> Resize, Move &amp; Crop Image
                 </button>
-                {processedFile && (
-                  <p className="text-xs text-green-600 dark:text-green-400 text-center">✓ Background removed — this image will be sent for conversion</p>
-                )}
-              </div>
+
+                {/* Background removal */}
+                <div className="card p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Eraser size={14} className="text-gray-500" />
+                    <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Remove Background</h3>
+                    <span className="text-xs text-gray-400">(flood-fill from corners)</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="text-xs text-gray-500 w-24 flex-shrink-0">Tolerance: {bgTolerance}</label>
+                    <input type="range" min="5" max="80" value={bgTolerance}
+                      onChange={e => setBgTolerance(parseInt(e.target.value))} className="flex-1" />
+                  </div>
+                  <button onClick={handleRemoveBackground} disabled={processingBg} className="btn-secondary w-full text-sm">
+                    {processingBg
+                      ? <><div className="w-4 h-4 border-2 border-gray-400 border-t-gray-600 rounded-full animate-spin" /> Removing…</>
+                      : <><Eraser size={14} /> Remove Background</>}
+                  </button>
+                  {processedFile && (
+                    <p className="text-xs text-green-600 dark:text-green-400 text-center">✓ Modified image will be used for conversion</p>
+                  )}
+                </div>
+              </>
             )}
           </div>
 
@@ -819,13 +883,13 @@ export default function ImagePattern() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label text-xs">Width (stitches)</label>
-                  <input type="number" min="5" max="200" className="input" value={settings.gridWidth}
-                    onChange={e => setSettings(s => ({ ...s, gridWidth: Math.min(200, Math.max(5, parseInt(e.target.value) || 50)) }))} />
+                  <input type="number" min="1" max="500" className="input" value={settings.gridWidth}
+                    onChange={e => setSettings(s => ({ ...s, gridWidth: Math.min(500, Math.max(1, parseInt(e.target.value) || 1)) }))} />
                 </div>
                 <div>
                   <label className="label text-xs">Height (rows)</label>
-                  <input type="number" min="5" max="200" className="input" value={settings.gridHeight}
-                    onChange={e => setSettings(s => ({ ...s, gridHeight: Math.min(200, Math.max(5, parseInt(e.target.value) || 50)) }))} />
+                  <input type="number" min="1" max="500" className="input" value={settings.gridHeight}
+                    onChange={e => setSettings(s => ({ ...s, gridHeight: Math.min(500, Math.max(1, parseInt(e.target.value) || 1)) }))} />
                 </div>
               </div>
               <div>
@@ -852,16 +916,14 @@ export default function ImagePattern() {
             )}
 
             <button onClick={handleConvert} disabled={!selectedFile || converting} className="btn-primary w-full">
-              {converting ? (
-                <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Converting…</>
-              ) : (
-                <><ImageIcon size={16} /> Convert to Pattern</>
-              )}
+              {converting
+                ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Converting…</>
+                : <><ImageIcon size={16} /> Convert to Pattern</>}
             </button>
           </div>
         </div>
 
-        {/* Saved Patterns / Projects */}
+        {/* Saved Projects */}
         {(savedPatterns.length > 0 || loadingPatterns) && (
           <div className="mt-10">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">My Projects</h2>
@@ -878,18 +940,14 @@ export default function ImagePattern() {
                         <Trash2 size={13} />
                       </button>
                     </div>
-                    <p className="text-xs text-gray-400 mb-3">
-                      {p.width} × {p.height} · {p.colors.length} colors · {CRAFT_TYPES.find(c => c.value === p.craftType)?.label ?? p.craftType}
-                    </p>
+                    <p className="text-xs text-gray-400 mb-3">{p.width} × {p.height} · {p.colors.length} colors · {CRAFT_TYPES.find(c => c.value === p.craftType)?.label ?? p.craftType}</p>
                     <div className="flex flex-wrap gap-1 mb-3">
                       {p.colors.slice(0, 12).map((c, i) => (
-                        <div key={i} className="w-4 h-4 rounded" style={{ backgroundColor: c.hex }} title={`DMC ${c.dmcCode} - ${c.dmcName}`} />
+                        <div key={i} className="w-4 h-4 rounded" style={{ backgroundColor: c.hex }} title={`DMC ${c.dmcCode}`} />
                       ))}
                       {p.colors.length > 12 && <span className="text-xs text-gray-400">+{p.colors.length - 12}</span>}
                     </div>
-                    <button onClick={() => handleLoadSaved(p.id)} className="btn-secondary w-full text-sm py-1.5">
-                      Continue Editing
-                    </button>
+                    <button onClick={() => handleLoadSaved(p.id)} className="btn-secondary w-full text-sm py-1.5">Continue Editing</button>
                   </div>
                 ))}
               </div>
@@ -901,7 +959,6 @@ export default function ImagePattern() {
   }
 
   // ── Editor Step ──
-  // Canvas row that should be highlighted (mapped from display row)
   const canvasHighlightRow = currentRow !== null && result
     ? displayToCanvasRow(currentRow + 1, result.height, startFromBottom)
     : null
@@ -913,111 +970,79 @@ export default function ImagePattern() {
         <button onClick={() => setStep('upload')} className="btn-ghost text-sm">
           <ChevronLeft size={16} /> Projects
         </button>
-
         <div className="flex-1 min-w-32 max-w-56">
-          <input className="input text-sm py-1.5" value={patternName}
-            onChange={e => setPatternName(e.target.value)} placeholder="Pattern name" />
+          <input className="input text-sm py-1.5" value={patternName} onChange={e => setPatternName(e.target.value)} placeholder="Pattern name" />
         </div>
-
         {selectedColor !== null && (
           <div className="flex items-center gap-1.5 text-sm text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 px-3 py-1.5 rounded-xl">
-            <Paintbrush size={13} />
-            Painting: DMC {colors[selectedColor]?.dmcCode}
+            <Paintbrush size={13} /> Painting: DMC {colors[selectedColor]?.dmcCode}
             <div className="w-3.5 h-3.5 rounded" style={{ backgroundColor: colors[selectedColor]?.hex }} />
           </div>
         )}
-
         <div className="flex items-center gap-1 ml-auto">
-          <button onClick={() => setCellSize(s => Math.max(3, s - 2))} className="btn-ghost p-2" title="Zoom out"><ZoomOut size={16} /></button>
+          <button onClick={() => setCellSize(s => Math.max(3, s - 2))} className="btn-ghost p-2"><ZoomOut size={16} /></button>
           <span className="text-xs text-gray-400 w-10 text-center">{cellSize}px</span>
-          <button onClick={() => setCellSize(s => Math.min(24, s + 2))} className="btn-ghost p-2" title="Zoom in"><ZoomIn size={16} /></button>
+          <button onClick={() => setCellSize(s => Math.min(24, s + 2))} className="btn-ghost p-2"><ZoomIn size={16} /></button>
         </div>
-
         <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
           <input type="checkbox" checked={includePDFDesc} onChange={e => setIncludePDFDesc(e.target.checked)} className="rounded border-gray-300" />
           Row guide in PDF
         </label>
-
         <button onClick={handleSave} disabled={saving} className="btn-secondary text-sm">
-          <Save size={14} />
-          {saving ? 'Saving…' : saveMsg || 'Save'}
+          <Save size={14} /> {saving ? 'Saving…' : saveMsg || 'Save'}
         </button>
-
         <button onClick={handleExportPDF} className="btn-primary text-sm">
           <Download size={14} /> Export PDF
         </button>
       </div>
 
-      {/* Info bar: resize + stats + row tracker */}
+      {/* Info bar */}
       <div className="flex-shrink-0 px-4 py-1.5 bg-gray-50 dark:bg-gray-950 border-b border-gray-100 dark:border-gray-800 flex items-center gap-3 text-xs text-gray-400 flex-wrap">
         <div className="flex items-center gap-1">
           <span>Grid:</span>
-          <input
-            type="number" min="5" max="200" value={resizeW}
-            onChange={e => setResizeW(parseInt(e.target.value) || 5)}
+          <input type="number" min="1" max="500" value={resizeW}
+            onChange={e => setResizeW(parseInt(e.target.value) || 1)}
             onBlur={() => handleResizeGrid(resizeW, resizeH)}
             onKeyDown={e => e.key === 'Enter' && handleResizeGrid(resizeW, resizeH)}
             className="w-14 text-xs border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-brand-400"
-            title="Width — press Enter or click away to resize"
           />
           <span>×</span>
-          <input
-            type="number" min="5" max="200" value={resizeH}
-            onChange={e => setResizeH(parseInt(e.target.value) || 5)}
+          <input type="number" min="1" max="500" value={resizeH}
+            onChange={e => setResizeH(parseInt(e.target.value) || 1)}
             onBlur={() => handleResizeGrid(resizeW, resizeH)}
             onKeyDown={e => e.key === 'Enter' && handleResizeGrid(resizeW, resizeH)}
             className="w-14 text-xs border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-brand-400"
-            title="Height — press Enter or click away to resize"
           />
           <span>st</span>
         </div>
-
         <span className="text-gray-300 dark:text-gray-700">|</span>
         <span>{colors.length} colors</span>
         <span>{CRAFT_TYPES.find(c => c.value === settings.craftType)?.label}</span>
-
-        {/* Row tracker */}
         <div className="flex items-center gap-1 ml-auto">
           <span className="text-gray-500">Row:</span>
           <button
-            onClick={() => setCurrentRow(r => {
-              const max = (result?.height ?? 1) - 1
-              return startFromBottom ? (r !== null ? Math.min(max, r + 1) : 0) : (r !== null ? Math.max(0, r - 1) : 0)
-            })}
-            className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700" title={startFromBottom ? 'Previous row' : 'Next row'}
-          >
-            <ChevronUp size={13} />
-          </button>
-          <input
-            type="number" min="1" max={result?.height ?? 1}
+            onClick={() => setCurrentRow(r => { const max = (result?.height ?? 1) - 1; return startFromBottom ? (r !== null ? Math.min(max, r + 1) : 0) : (r !== null ? Math.max(0, r - 1) : 0) })}
+            className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+          ><ChevronUp size={13} /></button>
+          <input type="number" min="1" max={result?.height ?? 1}
             value={currentRow !== null ? currentRow + 1 : ''}
             placeholder="—"
             onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && result) setCurrentRow(Math.min(result.height - 1, Math.max(0, v - 1))) }}
             className="w-12 text-xs text-center border border-gray-200 dark:border-gray-700 rounded px-1 py-0.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-brand-400"
-            title="Current display row"
           />
           <button
-            onClick={() => setCurrentRow(r => {
-              const max = (result?.height ?? 1) - 1
-              return startFromBottom ? (r !== null ? Math.max(0, r - 1) : max) : (r !== null ? Math.min(max, r + 1) : 0)
-            })}
-            className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700" title={startFromBottom ? 'Next row' : 'Previous row'}
-          >
-            <ChevronDown size={13} />
-          </button>
+            onClick={() => setCurrentRow(r => { const max = (result?.height ?? 1) - 1; return startFromBottom ? (r !== null ? Math.max(0, r - 1) : max) : (r !== null ? Math.min(max, r + 1) : 0) })}
+            className="p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700"
+          ><ChevronDown size={13} /></button>
           {currentRow !== null && (
-            <button onClick={() => setCurrentRow(null)} className="ml-0.5 text-gray-300 hover:text-gray-500 dark:hover:text-gray-300" title="Clear tracker">
-              <X size={11} />
-            </button>
+            <button onClick={() => setCurrentRow(null)} className="ml-0.5 text-gray-300 hover:text-gray-500"><X size={11} /></button>
           )}
         </div>
-
-        {selectedColor === null && <span className="text-amber-500">Select a color from the palette to edit cells</span>}
+        {selectedColor === null && <span className="text-amber-500">Select a color to paint cells</span>}
       </div>
 
-      {/* Main editor */}
+      {/* Editor body */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Grid canvas */}
         <div ref={gridScrollRef} className="flex-1 overflow-auto p-4 bg-gray-100 dark:bg-gray-950">
           <div className="inline-block shadow-lg rounded-lg overflow-hidden">
             {result && (
@@ -1034,20 +1059,12 @@ export default function ImagePattern() {
         {/* Sidebar */}
         <div className="w-72 flex-shrink-0 border-l border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 flex flex-col">
           <div className="flex border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
-            <button
-              onClick={() => setSidebarTab('colors')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
-                sidebarTab === 'colors' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
-              }`}
-            >
+            <button onClick={() => setSidebarTab('colors')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${sidebarTab === 'colors' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}>
               <Paintbrush size={13} /> Colors
             </button>
-            <button
-              onClick={() => setSidebarTab('rows')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
-                sidebarTab === 'rows' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'
-              }`}
-            >
+            <button onClick={() => setSidebarTab('rows')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${sidebarTab === 'rows' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300'}`}>
               <List size={13} /> Row Guide
             </button>
           </div>
@@ -1058,7 +1075,7 @@ export default function ImagePattern() {
                 colors={colors} selectedColor={selectedColor} onSelect={setSelectedColor}
                 gridData={gridData} gridWidth={result?.width ?? 0} gridHeight={result?.height ?? 0}
                 yardagePerSkein={yardagePerSkein} onYardageChange={setYardagePerSkein}
-                onRemoveColor={handleRemoveColor}
+                onRemoveColor={handleRemoveColor} onChangeColor={handleChangeColor}
               />
             ) : (
               <WrittenDescription
