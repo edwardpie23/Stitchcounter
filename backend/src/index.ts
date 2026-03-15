@@ -7,6 +7,7 @@ import { projectsRouter } from './routes/projects';
 import { countersRouter } from './routes/counters';
 import { patternsRouter } from './routes/patterns';
 import { stashRouter } from './routes/stash';
+import { imagePatternRouter } from './routes/imagePattern';
 
 dotenv.config();
 
@@ -30,6 +31,7 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/counters', countersRouter);
 app.use('/api/patterns', patternsRouter);
 app.use('/api/stash', stashRouter);
+app.use('/api/image-patterns', imagePatternRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {

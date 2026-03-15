@@ -1,6 +1,6 @@
 import React from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, FolderOpen, Hash, BookOpen, Layers, X } from 'lucide-react'
+import { LayoutDashboard, FolderOpen, Hash, BookOpen, Layers, X, ImageIcon } from 'lucide-react'
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -8,6 +8,7 @@ const nav = [
   { to: '/counters', icon: Hash, label: 'Quick Counter' },
   { to: '/patterns', icon: BookOpen, label: 'Patterns' },
   { to: '/stash', icon: Layers, label: 'Yarn Stash' },
+  { to: '/image-pattern', icon: ImageIcon, label: 'Image to Pattern' },
 ]
 
 interface SidebarProps {

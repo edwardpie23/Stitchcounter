@@ -8,14 +8,29 @@ datasource db {
 }
 
 model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String
+  password      String
+  createdAt     DateTime       @default(now())
+  projects      Project[]
+  patterns      Pattern[]
+  stash         StashEntry[]
+  imagePatterns ImagePattern[]
+}
+
+model ImagePattern {
   id        String   @id @default(cuid())
-  email     String   @unique
   name      String
-  password  String
+  width     Int
+  height    Int
+  gridData  String   // JSON: number[] - color index per cell
+  colors    String   // JSON: {hex, dmcCode, dmcName, count}[]
+  craftType String   @default("knitting")
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
-  projects  Project[]
-  patterns  Pattern[]
-  stash     StashEntry[]
+  updatedAt DateTime @updatedAt
 }
 
 model Project {

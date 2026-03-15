@@ -10,6 +10,7 @@ import ProjectDetail from './pages/ProjectDetail'
 import Patterns from './pages/Patterns'
 import Stash from './pages/Stash'
 import QuickCounter from './pages/QuickCounters'
+import ImagePattern from './pages/ImagePattern'
 import Login from './pages/Login'
 import Register from './pages/Register'
 
@@ -31,6 +32,7 @@ const routeTitles: Record<string, string> = {
   '/counters': 'Quick Counter',
   '/patterns': 'Patterns',
   '/stash': 'Yarn Stash',
+  '/image-pattern': 'Image to Pattern',
 }
 
 function AppLayout() {
@@ -69,6 +71,7 @@ function AppLayout() {
             <Route path="/counters" element={<QuickCounter />} />
             <Route path="/patterns" element={<Patterns />} />
             <Route path="/stash" element={<Stash />} />
+            <Route path="/image-pattern" element={<ImagePattern />} />
           </Routes>
         </main>
       </div>
